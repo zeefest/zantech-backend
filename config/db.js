@@ -11,7 +11,7 @@ const pool = new Pool({
     rejectUnauthorized: false 
   }
 });
-console.log("Checking DB URL:", process.env.DATABASE_URL); /
+console.log("Checking DB URL:", process.env.DATABASE_URL); 
 
 
 if (!process.env.DATABASE_URL) {
