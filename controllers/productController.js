@@ -1,9 +1,8 @@
+
 import pool from '../config/db.js';
+import { v2 as cloudinary } from 'cloudinary';
 
-import fs from 'fs';
-import path from 'path';
-
-// GET /api/products  (public — only listed)
+// GET /api/products (Public)
 export const getProducts = async (req, res) => {
   try {
     const { search, category, minPrice, maxPrice } = req.query;
@@ -19,49 +18,54 @@ export const getProducts = async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
-// GET /api/products/all   (admin — includes unlisted)
+// GET /api/products/all (Admin)
 export const getAllProducts = async (_, res) => {
-  const { rows } = await pool.query('SELECT * FROM products ORDER BY id DESC');
-  res.json(rows);
+  try {
+    const { rows } = await pool.query('SELECT * FROM products ORDER BY id DESC');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
 // GET /api/products/:id
 export const getProductById = async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM products WHERE id=$1', [req.params.id]);
-  if (!rows.length) return res.status(404).json({ message: 'Product not found' });
-  res.json(rows[0]);
+  try {
+    const { rows } = await pool.query('SELECT * FROM products WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Product not found' });
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
 // GET /api/products/related/:id
 export const getRelatedProducts = async (req, res) => {
-  const prod = await pool.query('SELECT category FROM products WHERE id=$1', [req.params.id]);
-  if (!prod.rows.length) return res.json([]);
-  const { rows } = await pool.query(
-    'SELECT * FROM products WHERE category=$1 AND id<>$2 AND is_listed=TRUE LIMIT 4',
-    [prod.rows[0].category, req.params.id]
-  );
-  res.json(rows);
+  try {
+    const prod = await pool.query('SELECT category FROM products WHERE id=$1', [req.params.id]);
+    if (!prod.rows.length) return res.json([]);
+    const { rows } = await pool.query(
+      'SELECT * FROM products WHERE category=$1 AND id<>$2 AND is_listed=TRUE LIMIT 4',
+      [prod.rows[0].category, req.params.id]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
-
-
-
-
-
+// CREATE PRODUCT
 export const createProduct = async (req, res) => {
   try {
     const { name, purchase_price, sales_price, description, category, stock } = req.body;
-    const image_url = req.file ? `/uploads/${req.file.filename}` : '';
+    
+    // Cloudinary upload hone ke baad secure link automatic 'req.file.path' mein milta hai
+    const image_url = req.file ? req.file.path : '';
 
     const { rows } = await pool.query(
-      `INSERT INTO products (name,purchase_price,sales_price,description,category,image_url,stock)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO products (name, purchase_price, sales_price, description, category, image_url, stock)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [name, purchase_price, sales_price, description, category, image_url, stock || 100]
     );
     res.status(201).json(rows[0]);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
+// UPDATE PRODUCT
 export const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
@@ -71,11 +75,19 @@ export const updateProduct = async (req, res) => {
     let finalImg = oldP.rows[0]?.image_url;
 
     if (req.file) {
-      finalImg = `/uploads/${req.file.filename}`;
-      // Purani file delete karna
-      if (oldP.rows[0]?.image_url?.startsWith('/uploads/')) {
-        const oldPath = path.join(process.cwd(), oldP.rows[0].image_url.substring(1));
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      finalImg = req.file.path; // Naya Cloudinary URL
+
+      // [Optional] Agar Cloudinary se purani file delete karni ho:
+      const oldUrl = oldP.rows[0]?.image_url;
+      if (oldUrl && oldUrl.includes('cloudinary')) {
+        try {
+          // URL se public_id nikalna (e.g., zantech_mart_products/filename)
+          const urlParts = oldUrl.split('/');
+          const folderWithFile = urlParts[urlParts.length - 2] + '/' + urlParts[urlParts.length - 1].split('.')[0];
+          await cloudinary.uploader.destroy(folderWithFile);
+        } catch (cloudErr) {
+          console.log("Purani image cloud se delete nahi ho saki:", cloudErr.message);
+        }
       }
     }
 
@@ -88,8 +100,10 @@ export const updateProduct = async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
-// Baki controllers (getProducts, deleteProduct etc) wahi rahenge jo pehle the.// DELETE /api/products/:id   → soft delete
+// DELETE PRODUCT (Soft Delete)
 export const deleteProduct = async (req, res) => {
-  await pool.query('UPDATE products SET is_listed=FALSE WHERE id=$1', [req.params.id]);
-  res.json({ message: 'Product unlisted' });
+  try {
+    await pool.query('UPDATE products SET is_listed=FALSE WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Product unlisted' });
+  } catch (err) { res.status(500).json({ message: err.message }); }
 };
